@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from structure_analyzer import analyze_structure
 from openai import OpenAI
@@ -10,9 +10,24 @@ load_dotenv()
 app = FastAPI()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# 🔐 로그인 요청 형식
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+# 🧪 분석 요청 형식
 class TextInput(BaseModel):
     text: str
 
+# ✅ 로그인 API
+@app.post("/login")
+def login(data: LoginRequest):
+    if data.username == "admin" and data.password == "1234":
+        return {"message": "login success"}
+    else:
+        raise HTTPException(status_code=401, detail="invalid credentials")
+
+# ✅ 문장 구조 분석 API
 @app.post("/analyze_structure")
 def analyze_text(input: TextInput):
     try:
@@ -21,6 +36,7 @@ def analyze_text(input: TextInput):
     except Exception as e:
         return {"error": str(e)}
 
+# ✅ 주제·제목·요지 분석 API
 @app.post("/analyze_topic_title_summary")
 def analyze_topic_title_summary(input: TextInput):
     prompt = f"""You are an English text analyzer.
