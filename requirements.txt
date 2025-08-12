@@ -1,11 +1,7 @@
-fastapi==0.111.0
-uvicorn[standard]==0.30.1
-python-dotenv==1.0.1
-openai==1.35.10
-pydantic==2.7.1
-requests==2.32.3
-
-# spaCy 사용 시만 추가
+fastapi==0.110.0
+uvicorn==0.29.0
+python-dotenv
+openai>=1.0.0
 spacy==3.7.4
-# (주의) en_core_web_sm 모델은 requirements에 넣지 말고,
-# 로컬/빌드 스크립트에서: python -m spacy download en_core_web_sm
+pydantic==2.6.4
+requests
