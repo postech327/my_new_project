@@ -1,10 +1,11 @@
-fastapi==0.110.0          # ⬅️ 0.111.0 대신 0.110.0으로 다운그레이드
+fastapi==0.110.0
 uvicorn[standard]==0.30.1
 pydantic==2.7.1
 python-dotenv==1.0.1
 openai==1.35.10
+httpx==0.27.2           # ⬅️ 추가
 
 spacy==3.7.4
-typer<0.10.0              # ⬅️ spaCy 요구사항에 맞춰 명시적으로 고정
-numpy<2.0                 # Render 빌드 환경에서 안전하게
+typer<0.10.0
+numpy<2.0
 en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
