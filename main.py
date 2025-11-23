@@ -220,3 +220,15 @@ def chat(req: ChatRequest):
     except Exception as e:
         logger.exception("Chat error: %s", e)
         return _json({"챗봇 응답": f"❌ 서버 오류: {str(e)}"}, 500)
+    
+# ---------- 라우터 등록 (문장 구조 분석) ----------
+from routers.structure import router as structure_router
+app.include_router(structure_router)
+
+
+# ⬇️ 이 줄 추가
+from routers.paragraph import router as paragraph_router
+app.include_router(paragraph_router)
+
+from routers.word_mcq_api import router as word_mcq_router
+app.include_router(word_mcq_router)
