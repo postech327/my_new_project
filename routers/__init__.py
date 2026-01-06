@@ -1,4 +1,4 @@
 from . import analysis
-from . import teacher_sets   # ← 이 줄 추가
+from . import teacher_problem_sets
 
-__all__ = ["analysis", "teacher_sets"]
+__all__ = ["analysis", "teacher_problem_sets"]
