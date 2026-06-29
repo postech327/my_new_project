@@ -1,216 +1,159 @@
 # routers/teacher_problem_sets.py
-from __future__ import annotations
-
-from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from datetime import datetime
 
 from db import get_db
 import models
+from utils.security import require_role
+from services.problem_set_service import (
+    create_problem_set_from_analysis,
+    create_problem_set_from_text,
+)
 
 router = APIRouter(
-    prefix="/teacher",
+    prefix="/teacher/problem_sets",
     tags=["teacher_problem_sets"],
 )
 
-# ----------------------------
-# Utils
-# ----------------------------
-_CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"]
+# =====================================================
+# 1️⃣ 기존: Analysis 기반 자동 생성
+# =====================================================
+@router.post("/auto")
+def auto_generate_problem_set(
+    analysis_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_role("teacher")),
+):
 
-
-def _label_for(idx: int) -> str:
-    if 0 <= idx < len(_CIRCLED):
-        return _CIRCLED[idx]
-    return str(idx + 1)
-
-
-def _ensure_options(options: List[str]) -> List[str]:
-    cleaned = [o.strip() for o in options if o and o.strip()]
-    if len(cleaned) < 2:
-        raise HTTPException(status_code=400, detail="options must have at least 2 items")
-    return cleaned
-
-
-def _db_get(db: Session, model, obj_id: int):
-    get_fn = getattr(db, "get", None)
-    if callable(get_fn):
-        return db.get(model, obj_id)
-    return db.query(model).filter(model.id == obj_id).first()
-
-
-# ----------------------------
-# Schemas (요청/응답 전용)
-# ----------------------------
-class SaveItem(BaseModel):
-    stem: str
-    options: List[str]
-    answer_index: int = Field(ge=0)
-    meta: Dict[str, Any] = Field(default_factory=dict)
-    explanation: Optional[str] = None
-    order: Optional[int] = None
-
-
-class SaveProblemSetReq(BaseModel):
-    analysis_id: int
-    question_type: str
-    name: str = "Problem Set"
-    description: Optional[str] = None
-    created_by: Optional[str] = "teacher"
-    types_json: Optional[List[str]] = None
-    mode: str = "teacher"
-    is_published: bool = False
-
-    items: List[SaveItem]
-
-
-class SaveProblemSetRes(BaseModel):
-    passage_id: int
-    problem_set_id: int
-    question_count: int
-
-
-# ----------------------------
-# POST: 문제세트 저장 (B안)
-# ----------------------------
-@router.post("/problem_sets", response_model=SaveProblemSetRes)
-def create_problem_set(req: SaveProblemSetReq, db: Session = Depends(get_db)):
-    if not req.items:
-        raise HTTPException(status_code=400, detail="items is empty")
-
-    # 1) AnalysisRecord → Passage
-    rec = _db_get(db, models.AnalysisRecord, req.analysis_id)
-    if not rec:
+    analysis = (
+        db.query(models.AnalysisRecord)
+        .filter(models.AnalysisRecord.id == analysis_id)
+        .first()
+    )
+    if not analysis:
         raise HTTPException(status_code=404, detail="AnalysisRecord not found")
 
-    passage_content = (rec.input_text or "").strip()
-    if not passage_content:
-        raise HTTPException(status_code=400, detail="analysis.input_text is empty")
+    if not analysis.passage_id:
+        raise HTTPException(status_code=400, detail="AnalysisRecord has no passage")
 
-    passage = models.Passage(
-        title=f"(from analysis {req.analysis_id})",
-        content=passage_content,
-        created_by=req.created_by,
+    passage = (
+        db.query(models.Passage)
+        .filter(models.Passage.id == analysis.passage_id)
+        .first()
     )
-    db.add(passage)
-    db.flush()
+    if not passage:
+        raise HTTPException(status_code=404, detail="Passage not found")
 
-    # 2) ProblemSet
-    types_json = req.types_json if req.types_json else [req.question_type]
-    ps = models.ProblemSet(
-        passage_id=passage.id,
-        name=req.name,
-        description=req.description,
-        created_by=req.created_by,
-        types_json=types_json,
-        mode=req.mode,
-        is_published=req.is_published,
+    problem_set = create_problem_set_from_analysis(
+        db=db,
+        passage=passage,
+        analysis=analysis,
+        created_by=current_user["sub"],
     )
-    db.add(ps)
-    db.flush()
 
-    # 3) Question + Option
-    for i, item in enumerate(req.items):
-        stem = (item.stem or "").strip()
-        if not stem:
-            raise HTTPException(status_code=400, detail=f"item[{i}].stem is empty")
+    # 🔥 자동 배정 추가
+    students = db.query(models.User).filter(models.User.role == "student").all()
 
-        options = _ensure_options(item.options)
-        if item.answer_index >= len(options):
-            raise HTTPException(
-                status_code=400,
-                detail=f"item[{i}].answer_index out of range",
-            )
-
-        explanation = (
-            (item.explanation or "").strip()
-            or item.meta.get("explain")
-            or item.meta.get("explanation")
+    for student in students:
+        assignment = models.ExamAssignment(
+            user_id=student.id,  # ⚠ student_id 아님!
+            problem_set_id=problem_set.id,
+            assigned_at=datetime.utcnow(),
+            is_completed=False,
         )
-
-        q = models.Question(
-            question_type=req.question_type,
-            text=stem,
-            explanation=explanation if explanation else None,
-            order=item.order if item.order is not None else (i + 1),
-            answer_index=item.answer_index,   # ✅ B안 핵심
-            passage_id=passage.id,
-            problem_set_id=ps.id,
-        )
-        db.add(q)
-        db.flush()
-
-        for opt_idx, opt_text in enumerate(options):
-            db.add(
-                models.Option(
-                    question_id=q.id,
-                    label=_label_for(opt_idx),
-                    text=opt_text,
-                )
-            )
+        db.add(assignment)
 
     db.commit()
 
-    return SaveProblemSetRes(
-        passage_id=passage.id,
-        problem_set_id=ps.id,
-        question_count=len(req.items),
+    return {
+        "ok": True,
+        "problem_set": {
+            "id": problem_set.id,
+            "name": problem_set.name,
+            "question_count": len(problem_set.questions),
+        },
+    }
+
+
+# =====================================================
+# 🔥 2️⃣ 지문 직접 입력 → 시험지 생성 + 자동 배정
+# =====================================================
+@router.post("/from_text")
+def generate_problem_set_from_text(
+    title: str,
+    content: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_role("teacher")),
+):
+
+    # 1️⃣ Teacher 조회
+    teacher = (
+        db.query(models.User)
+        .filter(models.User.id == int(current_user["sub"]))
+        .first()
     )
 
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found")
 
-# ----------------------------
-# GET: Teacher 미리보기
-# ----------------------------
-@router.get("/problem_sets/{problem_set_id}")
-def get_problem_set(problem_set_id: int, db: Session = Depends(get_db)) -> Dict[str, Any]:
-    ps = _db_get(db, models.ProblemSet, problem_set_id)
-    if not ps:
-        raise HTTPException(status_code=404, detail="ProblemSet not found")
+    # 2️⃣ Passage 생성
+    passage = models.Passage(
+        teacher_id=teacher.id,
+        source_title=title,
+        text=content,
+        visibility="private",
+    )
 
-    passage = ps.passage
+    db.add(passage)
+    db.commit()
+    db.refresh(passage)
 
-    questions = (
-        db.query(models.Question)
-        .filter(models.Question.problem_set_id == ps.id)
-        .order_by(models.Question.order.asc(), models.Question.id.asc())
+    # 3️⃣ ProblemSet 생성
+    problem_set = create_problem_set_from_text(
+        db=db,
+        passage=passage,
+        created_by=current_user["sub"],
+    )
+
+    # 🔥 4️⃣ 자동 배정 (여기가 핵심!)
+    students = db.query(models.User).filter(models.User.role == "student").all()
+
+    for student in students:
+        assignment = models.ExamAssignment(
+            user_id=student.id,  # ⚠ 반드시 user_id
+            problem_set_id=problem_set.id,
+            assigned_at=datetime.utcnow(),
+            is_completed=False,
+        )
+        db.add(assignment)
+
+    db.commit()
+
+    return {
+        "ok": True,
+        "passage_id": passage.id,
+        "problem_set": {
+            "id": problem_set.id,
+            "name": problem_set.name,
+            "question_count": len(problem_set.questions),
+        },
+    }
+
+
+# =====================================================
+# 교사 문제지 목록
+# =====================================================
+@router.get("/list")
+def get_teacher_problem_sets(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_role("teacher")),
+):
+    problem_sets = (
+        db.query(models.ProblemSet)
+        .filter(models.ProblemSet.created_by == current_user["sub"])
         .all()
     )
 
-    return {
-        "problem_set": {
-            "id": ps.id,
-            "name": ps.name,
-            "description": ps.description,
-            "created_by": ps.created_by,
-            "types_json": ps.types_json,
-            "mode": ps.mode,
-            "is_published": ps.is_published,
-            "created_at": ps.created_at,
-        },
-        "passage": {
-            "id": passage.id,
-            "title": passage.title,
-            "content": passage.content,
-        },
-        "questions": [
-            {
-                "id": q.id,
-                "question_type": q.question_type,
-                "text": q.text,
-                "explanation": q.explanation,
-                "order": q.order,
-                "answer_index": q.answer_index,  # ✅ Teacher만 확인
-                "options": [
-                    {
-                        "id": o.id,
-                        "label": o.label,
-                        "text": o.text,
-                    }
-                    for o in q.options
-                ],
-            }
-            for q in questions
-        ],
-    }
+    return problem_sets

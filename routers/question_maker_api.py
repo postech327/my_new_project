@@ -1,5 +1,7 @@
 # lib/routers/question_maker_api.py
 
+print("🔥 question_maker_api 로드됨")
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import os, json, re, random
@@ -90,7 +92,7 @@ STRICT rules:
   summary, A_correct, A_distractors, B_correct, B_distractors
 
 Passage:
-\"\"\"{passage}\"\"\"
+\"\"\"{b.passage}\"\"\"
 """
         try:
             r = client.chat.completions.create(
@@ -131,3 +133,74 @@ Passage:
         except Exception:
             summary, A, B, ans = _fallback_two_sent()
     ...
+    
+    # -------------------------------------------------
+# 🔥 기본 문제 생성 (topic/title/gist)
+# -------------------------------------------------
+class BasicQInput(BaseModel):
+    passage: str
+
+
+@router.post("/generate_basic")
+def generate_basic_questions(payload: BasicQInput):
+
+    if client is None:
+        raise HTTPException(status_code=500, detail="OpenAI API key 없음")
+
+    prompt = f"""
+You are an English exam expert.
+
+Create 3 multiple-choice questions:
+1. topic
+2. title
+3. gist
+
+Rules:
+- Each question must have 5 choices
+- Only ONE correct answer
+- Choices must be similar in length
+- Explanation must be in Korean
+- Return ONLY JSON (no markdown)
+
+Format:
+{{
+  "questions": [
+    {{
+      "question_type": "topic",
+      "question_text": "...",
+      "choices": [
+        {{"number": 1, "text": "..."}},
+        {{"number": 2, "text": "..."}},
+        {{"number": 3, "text": "..."}},
+        {{"number": 4, "text": "..."}},
+        {{"number": 5, "text": "..."}}
+      ],
+      "answer": 2,
+      "explanation": "..."
+    }}
+  ]
+}}
+
+Passage:
+{payload.passage}
+"""
+
+    try:
+        r = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.5,
+        )
+
+        content = r.choices[0].message.content.strip()
+
+        # 🔥 코드블록 제거
+        if content.startswith("```"):
+            content = content.replace("```json", "").replace("```", "").strip()
+
+        data = json.loads(content)
+
+        return data
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

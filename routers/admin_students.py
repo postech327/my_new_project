@@ -8,6 +8,8 @@ from sqlalchemy import func, case
 from db import get_db
 import models
 
+from utils.security import require_role   # 🔥 관리자 권한 체크
+
 router = APIRouter(
     prefix="/admin/students",
     tags=["admin_students"],
@@ -20,6 +22,7 @@ router = APIRouter(
 def student_summary(
     user_id: int,
     db: Session = Depends(get_db),
+    admin=Depends(require_role("admin")),  # 🔐 관리자만
 ):
     user = db.get(models.User, user_id)
     if not user:
@@ -61,6 +64,7 @@ def student_weekly_trend(
     user_id: int,
     weeks: int = Query(8, ge=1, le=52),
     db: Session = Depends(get_db),
+    admin=Depends(require_role("admin")),
 ):
     since = datetime.utcnow() - timedelta(weeks=weeks)
 
@@ -103,6 +107,7 @@ def student_weekly_trend(
 def student_accuracy_by_type(
     user_id: int,
     db: Session = Depends(get_db),
+    admin=Depends(require_role("admin")),
 ):
     rows = (
         db.query(
@@ -151,6 +156,7 @@ def student_accuracy_by_type(
 def student_latest_report(
     user_id: int,
     db: Session = Depends(get_db),
+    admin=Depends(require_role("admin")),
 ):
     report = (
         db.query(models.StudyReport)
@@ -170,9 +176,17 @@ def student_latest_report(
         "coach_message": report.coach_message,
         "created_at": report.created_at,
     }
-    
+
+
+# ======================================================
+# 5️⃣ 최근 풀이 기록
+# ======================================================
 @router.get("/students/{user_id}/history")
-def student_history(user_id: int, db: Session = Depends(get_db)):
+def student_history(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin=Depends(require_role("admin")),
+):
     rows = (
         db.query(
             models.Question.question_type,
@@ -194,15 +208,17 @@ def student_history(user_id: int, db: Session = Depends(get_db)):
         }
         for r in rows
     ]
-    
+
+
+# ======================================================
+# 6️⃣ 약점 유형 상세 분석
+# ======================================================
 @router.get("/students/{user_id}/weak-types")
 def student_weak_types(
     user_id: int,
     db: Session = Depends(get_db),
+    admin=Depends(require_role("admin")),
 ):
-    """
-    학생 유형별 약점 분석
-    """
     rows = (
         db.query(
             models.Question.question_type,
@@ -232,10 +248,8 @@ def student_weak_types(
             "total_attempts": r.total,
             "wrong_attempts": r.wrong,
             "accuracy_rate": accuracy,
-            "is_weak": accuracy < 70,  # ⭐ 기준
+            "is_weak": accuracy < 70,
         })
 
-    # 👉 약한 유형부터 정렬
     result.sort(key=lambda x: x["accuracy_rate"])
-
     return result

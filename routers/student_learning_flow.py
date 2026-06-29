@@ -1,9 +1,11 @@
 from typing import List, Dict
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from db import get_db
 import models
+from utils.auth_jwt import get_current_user
 
 router = APIRouter(
     prefix="/student/learning",
@@ -17,6 +19,7 @@ router = APIRouter(
 def start_learning(
     problem_set_id: int,
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),  # ✅ JWT 인증
 ):
     ps = db.get(models.ProblemSet, problem_set_id)
     if not ps:
@@ -62,10 +65,12 @@ def start_learning(
 # =====================================================
 @router.post("/submit")
 def submit_answers(
-    user_id: int,
     answers: List[Dict],  # [{question_id, selected_index}]
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),  # ✅ JWT 인증
 ):
+    user_id = int(current_user["sub"])
+
     user = db.get(models.User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -108,10 +113,12 @@ def submit_answers(
 # =====================================================
 @router.get("/result/{problem_set_id}")
 def learning_result(
-    user_id: int,
     problem_set_id: int,
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),  # ✅ JWT 인증
 ):
+    user_id = int(current_user["sub"])
+
     answers = (
         db.query(models.StudentAnswer)
         .join(models.Question)
@@ -122,6 +129,7 @@ def learning_result(
         .all()
     )
 
+
     if not answers:
         raise HTTPException(status_code=400, detail="No answers found")
 
@@ -129,7 +137,9 @@ def learning_result(
     correct = sum(1 for a in answers if a.is_correct)
     accuracy = round((correct / total) * 100, 2)
 
-    # 유형별 성취
+    # ----------------------------------
+    # 유형별 성취도
+    # ----------------------------------
     by_type: Dict[str, Dict] = {}
     for a in answers:
         qt = a.question.question_type
@@ -145,6 +155,21 @@ def learning_result(
 
     weak_types = [k for k, v in type_stats.items() if v < 60]
 
+    # =====================================================
+    # ✅ STEP 5-3: StudyReport 저장
+    # =====================================================
+    report = models.StudyReport(
+        user_id=user_id,
+        problem_set_id=problem_set_id,
+        accuracy_rate=accuracy,
+        weakest_type=weak_types[0] if weak_types else None,
+    )
+    db.add(report)
+    db.commit()
+
+    # ----------------------------------
+    # 응답
+    # ----------------------------------
     return {
         "problem_set_id": problem_set_id,
         "total_questions": total,

@@ -1,7 +1,7 @@
 # routers/structure.py
 from fastapi import APIRouter
 from pydantic import BaseModel
-from typing import Any, Dict, List
+from typing import Any, Dict
 from structure_analyzer import analyze_structure
 
 router = APIRouter(prefix="/analyze_structure", tags=["structure"])
@@ -19,14 +19,17 @@ def _normalize_result(r: Any, original_text: str) -> Dict[str, Any]:
             "text": r.get("text", original_text),
             "analyzed_text": r.get("analyzed_text", r.get("text", original_text)),
             "spans": r.get("spans", []),
-            "legend": r.get("legend", {"[]":"clauses","()":"phrases","{}":"non-finite"}),
+            "legend": r.get(
+                "legend",
+                {"[]": "clauses", "{}": "phrases", "()": "prepositional phrases"},
+            ),
         }
     # 문자열(옛 버전)인 경우
     return {
         "text": original_text,
         "analyzed_text": str(r),
         "spans": [],
-        "legend": {"[]":"clauses","()":"phrases","{}":"non-finite"},
+        "legend": {"[]": "clauses", "{}": "phrases", "()": "prepositional phrases"},
     }
 
 @router.post("")

@@ -33,7 +33,7 @@ class VocabItem(BaseModel):
     synonyms: List[str]
 
 
-# ───────── 응답 모델 ─────────
+# ───────── 분석 응답 모델 ─────────
 class PassageAnalysisData(BaseModel):
     topic_en: Optional[str] = None
     topic_ko: Optional[str] = None
@@ -52,3 +52,16 @@ class PassageAnalysisData(BaseModel):
 class PassageAnalyzeResponse(BaseModel):
     passage_id: int
     analysis: PassageAnalysisData
+
+
+# ───────── DB 연동용 (teacher) ─────────
+class PassageCreate(BaseModel):
+    content: str
+
+
+class PassageResponse(BaseModel):
+    id: int
+    content: str
+
+    class Config:
+        orm_mode = True
