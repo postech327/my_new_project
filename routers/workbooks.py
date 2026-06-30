@@ -759,8 +759,13 @@ def update_question(
         section_title=payload.section_title,
     )
     question.question_type = qtype
+    fields_set = getattr(
+        payload,
+        "model_fields_set",
+        getattr(payload, "__fields_set__", set()),
+    )
     if (
-        payload.section_id is not None
+        "section_id" in fields_set
         or payload.section_key is not None
         or payload.section_title is not None
     ):
