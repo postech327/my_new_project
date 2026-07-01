@@ -27,6 +27,7 @@ class WorkbookAttemptSubmitRequest(BaseModel):
     assignment_id: int
     workbook_id: int
     section_id: Optional[int] = None
+    question_ids: Optional[list[int]] = None
     answers: list[WorkbookAttemptAnswerIn] = Field(default_factory=list)
 
 
@@ -404,6 +405,13 @@ def submit_workbook_attempt(
                 for question in questions
                 if question.section_id == payload.section_id
             ]
+    if payload.question_ids is not None:
+        requested_question_ids = set(payload.question_ids)
+        questions = [
+            question
+            for question in questions
+            if question.id in requested_question_ids
+        ]
     submitted = _answer_lookup(payload.answers)
     scored_rows: list[dict[str, Any]] = []
     for question in questions:
