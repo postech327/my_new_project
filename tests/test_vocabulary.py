@@ -3,13 +3,16 @@ import unittest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+import models
 from db import Base
 from routers.vocabulary import (
     VocabularyAnswerIn,
     VocabularyAttemptIn,
+    VocabularyAssignIn,
     VocabularyBulkItemsIn,
     VocabularyItemIn,
     VocabularySetCreate,
+    assign_vocabulary_set,
     bulk_save_vocabulary_items,
     create_teacher_vocabulary_set,
     get_student_vocabulary_set,
@@ -28,6 +31,32 @@ class VocabularyFlowTest(unittest.TestCase):
         db = sessionmaker(bind=engine)()
         teacher = {"sub": "101"}
         student = {"sub": "202"}
+        db.add_all(
+            [
+                models.User(
+                    id=101,
+                    email="teacher@test.local",
+                    password_hash="test",
+                    nickname="teacher",
+                    role="teacher",
+                ),
+                models.User(
+                    id=202,
+                    email="student@test.local",
+                    password_hash="test",
+                    nickname="student",
+                    role="student",
+                ),
+                models.User(
+                    id=303,
+                    email="student3@test.local",
+                    password_hash="test",
+                    nickname="student3",
+                    role="student",
+                ),
+            ]
+        )
+        db.commit()
 
         created = create_teacher_vocabulary_set(
             VocabularySetCreate(title="Test words", status="published"),
@@ -48,9 +77,27 @@ class VocabularyFlowTest(unittest.TestCase):
         )
 
         self.assertEqual(saved["item_count"], 2)
+        assigned = assign_vocabulary_set(
+            created["set_id"],
+            VocabularyAssignIn(student_ids=[202, 202]),
+            db,
+            teacher,
+        )
+        self.assertEqual(assigned["assigned_count"], 1)
+        duplicate = assign_vocabulary_set(
+            created["set_id"],
+            VocabularyAssignIn(student_ids=[202]),
+            db,
+            teacher,
+        )
+        self.assertEqual(duplicate["skipped_count"], 1)
         self.assertEqual(
             len(list_student_vocabulary_sets(db, student)["items"]),
             1,
+        )
+        self.assertEqual(
+            len(list_student_vocabulary_sets(db, {"sub": "303"})["items"]),
+            0,
         )
         detail = get_student_vocabulary_set(created["set_id"], db, student)
         attempt = submit_vocabulary_attempt(

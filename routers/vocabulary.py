@@ -61,6 +61,10 @@ class VocabularyAttemptIn(BaseModel):
     answers: list[VocabularyAnswerIn] = Field(default_factory=list)
 
 
+class VocabularyAssignIn(BaseModel):
+    student_ids: list[int] = Field(default_factory=list)
+
+
 def _user_id(current_user: dict) -> int:
     return int(current_user["sub"])
 
@@ -142,6 +146,36 @@ def _serialize_set(item: models.VocabularySet, include_items: bool = False):
     if include_items:
         data["items"] = [_serialize_item(vocabulary_item) for vocabulary_item in item.items]
     return data
+
+
+def _vocabulary_assignment(
+    db: Session,
+    set_id: int,
+    student_id: int,
+):
+    return (
+        db.query(models.LearningAssignment)
+        .filter(
+            models.LearningAssignment.student_id == student_id,
+            models.LearningAssignment.content_type == "vocabulary_set",
+            models.LearningAssignment.content_id == set_id,
+        )
+        .first()
+    )
+
+
+def _serialize_assignment(assignment: models.LearningAssignment):
+    return {
+        "id": assignment.id,
+        "assignment_id": assignment.id,
+        "student_id": assignment.student_id,
+        "student_username": assignment.student.nickname if assignment.student else None,
+        "student_email": assignment.student.email if assignment.student else None,
+        "status": assignment.status,
+        "assigned_at": assignment.assigned_at.isoformat()
+        if assignment.assigned_at
+        else None,
+    }
 
 
 @router.get("/teacher/vocabulary-sets")
@@ -284,14 +318,108 @@ def bulk_save_vocabulary_items(
     return _serialize_set(vocabulary_set, include_items=True)
 
 
+@router.post("/teacher/vocabulary-sets/{set_id}/assign")
+def assign_vocabulary_set(
+    set_id: int,
+    payload: VocabularyAssignIn,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_role("teacher")),
+):
+    teacher_id = _user_id(current_user)
+    vocabulary_set = _teacher_set_or_404(db, set_id, teacher_id)
+    if vocabulary_set.status != "published":
+        raise HTTPException(
+            status_code=400,
+            detail="Only published vocabulary sets can be assigned",
+        )
+    student_ids = sorted({student_id for student_id in payload.student_ids if student_id > 0})
+    if not student_ids:
+        raise HTTPException(status_code=400, detail="student_ids is required")
+
+    created = []
+    skipped_count = 0
+    for student_id in student_ids:
+        student = (
+            db.query(models.User)
+            .filter(models.User.id == student_id, models.User.role == "student")
+            .first()
+        )
+        if not student:
+            raise HTTPException(status_code=400, detail=f"Invalid student: {student_id}")
+        existing = (
+            db.query(models.LearningAssignment)
+            .filter(
+                models.LearningAssignment.teacher_id == teacher_id,
+                models.LearningAssignment.student_id == student_id,
+                models.LearningAssignment.content_type == "vocabulary_set",
+                models.LearningAssignment.content_id == set_id,
+            )
+            .first()
+        )
+        if existing:
+            skipped_count += 1
+            continue
+        assignment = models.LearningAssignment(
+            teacher_id=teacher_id,
+            student_id=student_id,
+            content_type="vocabulary_set",
+            content_id=set_id,
+            title=vocabulary_set.title,
+            status="assigned",
+            assigned_at=datetime.utcnow(),
+        )
+        db.add(assignment)
+        created.append(assignment)
+    db.commit()
+    for assignment in created:
+        db.refresh(assignment)
+    return {
+        "assigned_count": len(created),
+        "skipped_count": skipped_count,
+        "assignments": [_serialize_assignment(item) for item in created],
+    }
+
+
+@router.get("/teacher/vocabulary-sets/{set_id}/assignments")
+def list_vocabulary_assignments(
+    set_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_role("teacher")),
+):
+    teacher_id = _user_id(current_user)
+    _teacher_set_or_404(db, set_id, teacher_id)
+    items = (
+        db.query(models.LearningAssignment)
+        .filter(
+            models.LearningAssignment.teacher_id == teacher_id,
+            models.LearningAssignment.content_type == "vocabulary_set",
+            models.LearningAssignment.content_id == set_id,
+        )
+        .order_by(models.LearningAssignment.assigned_at.desc())
+        .all()
+    )
+    return {"items": [_serialize_assignment(item) for item in items]}
+
+
 @router.get("/student/vocabulary-sets")
 def list_student_vocabulary_sets(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_role("student")),
 ):
+    student_id = _user_id(current_user)
+    assigned_set_ids = (
+        db.query(models.LearningAssignment.content_id)
+        .filter(
+            models.LearningAssignment.student_id == student_id,
+            models.LearningAssignment.content_type == "vocabulary_set",
+        )
+    )
     items = (
         db.query(models.VocabularySet)
-        .filter(models.VocabularySet.status == "published")
+        .filter(
+            models.VocabularySet.status == "published",
+            models.VocabularySet.id.in_(assigned_set_ids),
+        )
         .order_by(models.VocabularySet.created_at.desc())
         .all()
     )
@@ -304,7 +432,10 @@ def get_student_vocabulary_set(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_role("student")),
 ):
-    return _serialize_set(_published_set_or_404(db, set_id), include_items=True)
+    vocabulary_set = _published_set_or_404(db, set_id)
+    if not _vocabulary_assignment(db, set_id, _user_id(current_user)):
+        raise HTTPException(status_code=404, detail="Vocabulary set not assigned")
+    return _serialize_set(vocabulary_set, include_items=True)
 
 
 @router.post("/student/vocabulary-attempts/submit")
@@ -313,7 +444,11 @@ def submit_vocabulary_attempt(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_role("student")),
 ):
+    student_id = _user_id(current_user)
     vocabulary_set = _published_set_or_404(db, payload.set_id)
+    assignment = _vocabulary_assignment(db, payload.set_id, student_id)
+    if not assignment:
+        raise HTTPException(status_code=403, detail="Vocabulary set not assigned")
     item_by_id = {item.id: item for item in vocabulary_set.items}
     answers = []
     seen_item_ids = set()
@@ -335,7 +470,7 @@ def submit_vocabulary_attempt(
     total = len(answers)
     correct = sum(1 for answer in answers if answer["is_correct"])
     attempt = models.VocabularyAttempt(
-        student_id=_user_id(current_user),
+        student_id=student_id,
         set_id=vocabulary_set.id,
         mode=payload.mode,
         total_count=total,
@@ -356,6 +491,12 @@ def submit_vocabulary_attempt(
         )
     db.commit()
     db.refresh(attempt)
+    if assignment.status != "completed":
+        assignment.status = "completed"
+        assignment.started_at = assignment.started_at or datetime.utcnow()
+        assignment.completed_at = datetime.utcnow()
+        assignment.updated_at = datetime.utcnow()
+        db.commit()
     return {
         "attempt_id": attempt.id,
         "set_id": attempt.set_id,
