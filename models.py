@@ -713,6 +713,119 @@ class WorkbookAttemptAnswer(Base):
     question = relationship("WorkbookQuestion")
 
 
+class VocabularySet(Base):
+    __tablename__ = "vocabulary_sets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    source_type = Column(String(50), nullable=True, index=True)
+    source_label = Column(String(255), nullable=True)
+    grade_label = Column(String(50), nullable=True)
+    unit_label = Column(String(255), nullable=True)
+    status = Column(String(20), default="draft", nullable=False, index=True)
+    created_by = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, nullable=True)
+
+    creator = relationship("User")
+    items = relationship(
+        "VocabularyItem",
+        back_populates="vocabulary_set",
+        cascade="all, delete-orphan",
+        order_by="VocabularyItem.order_index",
+    )
+    attempts = relationship("VocabularyAttempt", back_populates="vocabulary_set")
+
+
+class VocabularyItem(Base):
+    __tablename__ = "vocabulary_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    set_id = Column(
+        Integer,
+        ForeignKey("vocabulary_sets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    word = Column(String(255), nullable=False, index=True)
+    meaning_ko = Column(Text, nullable=False)
+    example_sentence = Column(Text, nullable=True)
+    synonym = Column(Text, nullable=True)
+    antonym = Column(Text, nullable=True)
+    note = Column(Text, nullable=True)
+    order_index = Column(Integer, default=1, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, nullable=True)
+
+    vocabulary_set = relationship("VocabularySet", back_populates="items")
+    attempt_answers = relationship(
+        "VocabularyAttemptAnswer",
+        back_populates="item",
+    )
+
+
+class VocabularyAttempt(Base):
+    __tablename__ = "vocabulary_attempts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    set_id = Column(
+        Integer,
+        ForeignKey("vocabulary_sets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    mode = Column(String(30), default="meaning_quiz", nullable=False, index=True)
+    total_count = Column(Integer, default=0, nullable=False)
+    correct_count = Column(Integer, default=0, nullable=False)
+    score = Column(Float, default=0, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    student = relationship("User")
+    vocabulary_set = relationship("VocabularySet", back_populates="attempts")
+    answers = relationship(
+        "VocabularyAttemptAnswer",
+        back_populates="attempt",
+        cascade="all, delete-orphan",
+    )
+
+
+class VocabularyAttemptAnswer(Base):
+    __tablename__ = "vocabulary_attempt_answers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    attempt_id = Column(
+        Integer,
+        ForeignKey("vocabulary_attempts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    item_id = Column(
+        Integer,
+        ForeignKey("vocabulary_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    student_answer = Column(Text, nullable=True)
+    correct_answer = Column(Text, nullable=False)
+    is_correct = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    attempt = relationship("VocabularyAttempt", back_populates="answers")
+    item = relationship("VocabularyItem", back_populates="attempt_answers")
+
+
 class MockExam(Base):
     __tablename__ = "mock_exams"
 

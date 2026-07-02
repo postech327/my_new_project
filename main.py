@@ -81,6 +81,7 @@ from routers import learning_assignments
 from routers import student_workbooks
 from routers import workbooks
 from routers import workbook_attempts
+from routers import vocabulary
 
 import routers.student_wrong_answers
 print(routers.student_wrong_answers.__file__)
@@ -267,3 +268,4 @@ app.include_router(learning_assignments.router)
 app.include_router(student_workbooks.router)
 app.include_router(workbooks.router)
 app.include_router(workbook_attempts.router)
+app.include_router(vocabulary.router)
